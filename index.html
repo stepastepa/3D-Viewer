@@ -546,35 +546,38 @@
 
         // Keyboard Shortcuts (Global)
         window.addEventListener('keydown', function (event) {
-            const key = event.code.toLowerCase();
+            const code = event.code;
 
             // Shift Key: Enable Pan for Left Mouse
-            if (event.key === 'Shift') {
+            if (code === 'ShiftLeft' || code === 'ShiftRight') {
                 const perspectiveView = views.find(v => v.type === 'perspective');
                 if (perspectiveView && perspectiveView.controls) {
                     perspectiveView.controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
                 }
             }
 
-            switch (key) {
-                case '1':
+            switch (code) {
+                case 'Digit1':
+                case 'Numpad1':
                     views.forEach(v => v.tc.setMode('translate'));
                     break;
-                case '2':
+                case 'Digit2':
+                case 'Numpad2':
                     views.forEach(v => v.tc.setMode('rotate'));
                     break;
-                case '3':
+                case 'Digit3':
+                case 'Numpad3':
                     views.forEach(v => v.tc.setMode('scale'));
                     break;
-                case '+':
-                case '=':
+                case 'Equal':
+                case 'NumpadAdd':
                     views.forEach(v => v.tc.setSize(v.tc.size + 0.1));
                     break;
-                case '-':
-                case '_':
+                case 'Minus':
+                case 'NumpadSubtract':
                     views.forEach(v => v.tc.setSize(Math.max(v.tc.size - 0.1, 0.1)));
                     break;
-                case 'x':
+                case 'KeyX':
                     // Fancy Wireframe Toggle
                     objects.forEach(obj => {
                         if (!obj.material) return;
@@ -622,37 +625,38 @@
                         }
                     });
                     break;
-                case 'escape':
+                case 'Escape':
                     selectedObject = null;
                     views.forEach(v => v.tc.detach());
                     selectionHelper.visible = false;
                     break;
 
                 // Navigation
-                case 'w': keyState.moveForward = true; break;
-                case 's': keyState.moveBackward = true; break;
-                case 'a': keyState.moveLeft = true; break;
-                case 'd': keyState.moveRight = true; break;
-                case 'q': keyState.moveUp = true; break;
-                case 'e': keyState.moveDown = true; break;
+                case 'KeyW': keyState.moveForward = true; break;
+                case 'KeyS': keyState.moveBackward = true; break;
+                case 'KeyA': keyState.moveLeft = true; break;
+                case 'KeyD': keyState.moveRight = true; break;
+                case 'KeyQ': keyState.moveUp = true; break;
+                case 'KeyE': keyState.moveDown = true; break;
             }
         });
 
         window.addEventListener('keyup', function (event) {
-            if (event.key === 'Shift') {
+            const code = event.code;
+            if (code === 'ShiftLeft' || code === 'ShiftRight') {
                 const perspectiveView = views.find(v => v.type === 'perspective');
                 if (perspectiveView && perspectiveView.controls) {
                     perspectiveView.controls.mouseButtons.LEFT = THREE.MOUSE.NONE; // Back to Look Mode
                 }
             }
 
-            switch (event.code.toLowerCase()) {
-                case 'w': keyState.moveForward = false; break;
-                case 's': keyState.moveBackward = false; break;
-                case 'a': keyState.moveLeft = false; break;
-                case 'd': keyState.moveRight = false; break;
-                case 'q': keyState.moveUp = false; break;
-                case 'e': keyState.moveDown = false; break;
+            switch (code) {
+                case 'KeyW': keyState.moveForward = false; break;
+                case 'KeyS': keyState.moveBackward = false; break;
+                case 'KeyA': keyState.moveLeft = false; break;
+                case 'KeyD': keyState.moveRight = false; break;
+                case 'KeyQ': keyState.moveUp = false; break;
+                case 'KeyE': keyState.moveDown = false; break;
             }
         });
 
