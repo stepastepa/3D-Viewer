@@ -546,7 +546,7 @@
 
         // Keyboard Shortcuts (Global)
         window.addEventListener('keydown', function (event) {
-            const key = event.key.toLowerCase();
+            const key = event.code.toLowerCase();
 
             // Shift Key: Enable Pan for Left Mouse
             if (event.key === 'Shift') {
@@ -646,7 +646,7 @@
                 }
             }
 
-            switch (event.key.toLowerCase()) {
+            switch (event.code.toLowerCase()) {
                 case 'w': keyState.moveForward = false; break;
                 case 's': keyState.moveBackward = false; break;
                 case 'a': keyState.moveLeft = false; break;
