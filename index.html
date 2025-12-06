@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Viewer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: 'Inter', sans-serif;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+            z-index: 0;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .viewport {
+            position: absolute;
+            box-sizing: border-box;
+            border: 1px solid #444;
+            /* Simple border */
+            pointer-events: auto;
+            /* Enable interaction */
+        }
+
+        .viewport:hover {
+            border-color: #666;
+        }
+
+        .view-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #aaa;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 4px 8px;
+            border-radius: 4px;
+            pointer-events: none;
+            font-size: 12px;
+            text-transform: uppercase;
+            user-select: none;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas-container"></canvas>
+    <div id="ui-layer"></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://esm.sh/three@0.160.0",
+                "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { TransformControls } from 'three/addons/controls/TransformControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+        import { Line2 } from 'three/addons/lines/Line2.js';
+        import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+        import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+
+        // --- Configuration ---
+        const views = [
+            {
+                name: 'Perspective',
+                left: 0, bottom: 0.5, width: 0.5, height: 0.5,
+                background: new THREE.Color(0.2, 0.2, 0.2),
+                eye: [50, 50, 50],
+                up: [0, 1, 0],
+                fov: 45,
+                type: 'perspective',
+                layer: 1
+            },
+            {
+                name: 'Top',
+                left: 0, bottom: 0, width: 0.5, height: 0.5,
+                background: new THREE.Color(0.15, 0.15, 0.15),
+                eye: [0, 1000, 0],
+                up: [0, 0, -1],
+                type: 'ortho',
+                layer: 2
+            },
+            {
+                name: 'Front',
+                left: 0.5, bottom: 0, width: 0.5, height: 0.5,
+                background: new THREE.Color(0.15, 0.15, 0.15),
+                eye: [0, 0, 1000],
+                up: [0, 1, 0],
+                type: 'ortho',
+                layer: 3
+            },
+            {
+                name: 'Left',
+                left: 0.5, bottom: 0.5, width: 0.5, height: 0.5,
+                background: new THREE.Color(0.15, 0.15, 0.15),
+                eye: [-1000, 0, 0],
+                up: [0, 1, 0],
+                type: 'ortho',
+                layer: 4
+            }
+        ];
+
+        // --- Init ---
+        const canvas = document.getElementById('canvas-container');
+        const uiLayer = document.getElementById('ui-layer');
+        const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+
+        const scene = new THREE.Scene();
+
+        // --- Cameras, Controls, Viewports ---
+        const viewSize = 20; // Ortho camera size
+        let maximizedView = null;
+
+        // Raycaster for selection
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let selectedObject = null;
+        const objects = []; // Selectable objects
+
+        // Helper for selection visualization
+        const selectionHelper = new THREE.BoxHelper(undefined, 0xffff00);
+        selectionHelper.visible = false;
+        scene.add(selectionHelper);
+
+        // Navigation State
+        const keyState = {
+            moveForward: false,
+            moveBackward: false,
+            moveLeft: false,
+            moveRight: false,
+            moveUp: false,
+            moveDown: false
+        };
+
+        views.forEach(view => {
+            // 1. Camera
+            if (view.type === 'perspective') {
+                const camera = new THREE.PerspectiveCamera(view.fov, window.innerWidth / window.innerHeight, 0.1, 5000);
+                camera.position.fromArray(view.eye);
+                camera.up.fromArray(view.up);
+                view.camera = camera;
+            } else {
+                const aspect = window.innerWidth / window.innerHeight;
+                const camera = new THREE.OrthographicCamera(
+                    -viewSize * aspect, viewSize * aspect,
+                    viewSize, -viewSize,
+                    0.1, 5000
+                );
+                camera.position.fromArray(view.eye);
+                camera.up.fromArray(view.up);
+                camera.lookAt(0, 0, 0);
+                view.camera = camera;
+            }
+            // Note: We are NOT using layers for isolation anymore, relying on visibility toggling.
+            // But we can keep layer 0 enabled (default).
+
+            // 2. Viewport Div (Overlay)
+            const div = document.createElement('div');
+            div.className = 'viewport';
+            uiLayer.appendChild(div);
+            view.div = div;
+
+            // Label
+            const label = document.createElement('div');
+            label.className = 'view-label';
+            label.textContent = view.name;
+            div.appendChild(label);
+
+            // 3. OrbitControls
+            const controls = new OrbitControls(view.camera, div);
+            if (view.type === 'ortho') {
+                controls.enableRotate = false;
+                controls.enableZoom = true;
+                controls.enablePan = true;
+                controls.mouseButtons = {
+                    LEFT: THREE.MOUSE.PAN,
+                    MIDDLE: THREE.MOUSE.DOLLY,
+                    RIGHT: THREE.MOUSE.PAN
+                };
+            } else {
+                controls.enableRotate = true;
+                controls.enableZoom = true;
+                controls.enablePan = true;
+                // Game Style: Right=Orbit, Shift+Left=Pan, Left=Look(Custom)
+                controls.mouseButtons = {
+                    LEFT: THREE.MOUSE.NONE, // Handled manually for Look
+                    MIDDLE: THREE.MOUSE.DOLLY,
+                    RIGHT: THREE.MOUSE.ROTATE
+                };
+            }
+            view.controls = controls;
+
+            // 4. TransformControls
+            const tc = new TransformControls(view.camera, div);
+            tc.addEventListener('dragging-changed', function (event) {
+                controls.enabled = !event.value;
+            });
+
+            // Ensure TC is on Layer 0 (default) so internal raycaster works.
+            // We will manage visibility manually.
+            scene.add(tc);
+            view.tc = tc;
+
+            // 5. Interaction Hooks (Capture Phase)
+            const forceVisible = () => {
+                views.forEach(v => v.tc.visible = (v === view) && (v.tc.object !== undefined && v.tc.object !== null));
+            };
+            div.addEventListener('pointerdown', forceVisible, { capture: true });
+            div.addEventListener('pointermove', forceVisible, { capture: true });
+            div.addEventListener('pointerup', forceVisible, { capture: true });
+
+            // Custom Look Logic (Perspective Only)
+            let isLooking = false;
+            const lookSpeed = 0.005; // Increased sensitivity
+            let startClickTime = 0;
+            const clickThreshold = 200; // ms
+            let totalDrag = 0;
+
+            if (view.type === 'perspective') {
+                div.addEventListener('pointerdown', (event) => {
+                    // Check for Shift+Left (Pan) handled by OrbitControls via keydown toggle
+                    // If Shift is pressed, OrbitControls.mouseButtons.LEFT is PAN.
+                    // We only want Look if Shift is NOT pressed and it is Left Button (0).
+
+                    if (event.button === 0 && !event.shiftKey) {
+                        // Check for gizmo interaction
+                        if (tc.axis) return;
+
+                        // Look Mode
+                        isLooking = true;
+                        controls.enabled = false; // Disable OrbitControls
+                        div.setPointerCapture(event.pointerId);
+                        startClickTime = performance.now();
+                        totalDrag = 0;
+                    }
+                });
+
+                div.addEventListener('pointermove', (event) => {
+                    if (isLooking) {
+                        const movementX = event.movementX || 0;
+                        const movementY = event.movementY || 0;
+                        totalDrag += Math.abs(movementX) + Math.abs(movementY);
+
+                        // FPS Look: Rotate Camera using Euler (YXZ order) to prevent roll
+                        const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+                        euler.setFromQuaternion(view.camera.quaternion);
+
+                        euler.y -= movementX * lookSpeed;
+                        euler.x -= movementY * lookSpeed;
+
+                        // Clamp pitch to avoid flipping (max 85 degrees up/down)
+                        const maxPitch = Math.PI / 2 - 0.05;
+                        euler.x = Math.max(-maxPitch, Math.min(maxPitch, euler.x));
+
+                        view.camera.quaternion.setFromEuler(euler);
+
+                        // Update Controls Target to match new look direction
+                        // So OrbitControls doesn't snap back when re-enabled
+                        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(view.camera.quaternion);
+                        const dist = view.camera.position.distanceTo(controls.target);
+                        controls.target.copy(view.camera.position).add(forward.multiplyScalar(dist));
+                    }
+                });
+
+                div.addEventListener('pointerup', (event) => {
+                    if (isLooking) {
+                        isLooking = false;
+                        controls.enabled = true; // Re-enable OrbitControls
+                        div.releasePointerCapture(event.pointerId);
+
+                        // Check if it was a Click (minimal drag + short time)
+                        if (totalDrag < 5 && (performance.now() - startClickTime < clickThreshold)) {
+                            // Trigger Selection Logic manually since we intercepted it
+                            handleSelection(event);
+                        }
+                    }
+                });
+
+                // For Right Click / Shift+Left Pan - Selection shouldn't trigger if dragged
+                // But OrbitControls handles drag. We need a way to detect click vs drag for standard controls too.
+                // Or just use the standard click handler below for non-Look interactions?
+            }
+
+            // 6. Selection Logic (Bubble Phase) - Generalized
+            // We moved manual handling to pointerup for Perspective Look.
+            // For Ortho views and standard clicks, we still need this.
+            // But we need to filter out if it was part of a Look/Orbit drag.
+
+            // Let's make a unified handler
+            function handleSelection(event) {
+                if (tc.axis) return;
+
+                const rect = div.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+
+                mouse.x = (x / rect.width) * 2 - 1;
+                mouse.y = -(y / rect.height) * 2 + 1;
+
+                raycaster.setFromCamera(mouse, view.camera);
+                const intersects = raycaster.intersectObjects(objects, false);
+
+                if (intersects.length > 0) {
+                    const obj = intersects[0].object;
+                    if (selectedObject !== obj) {
+                        selectedObject = obj;
+                        views.forEach(v => v.tc.attach(obj));
+                        selectionHelper.setFromObject(obj);
+                        selectionHelper.visible = true;
+                    }
+                } else {
+                    if (selectedObject) {
+                        selectedObject = null;
+                        views.forEach(v => v.tc.detach());
+                        selectionHelper.visible = false;
+                    }
+                }
+            }
+
+            div.addEventListener('pointerdown', (event) => {
+                // For Ortho views, logic is simple (Click works).
+                // For Perspective, 'Look' logic handles click.
+                // We need to handle 'Right Click' select? No, usually Right is menu.
+                // We need to handle 'Shift+Click' select?
+
+                // If NOT Perspective Look Mode:
+                if (view.type !== 'perspective' || (event.button !== 0 || event.shiftKey)) {
+                    // Check for gizmo first
+                    if (tc.axis) return;
+
+                    // Helper to detect click vs drag
+                    const startX = event.clientX;
+                    const startY = event.clientY;
+
+                    const onUp = (e) => {
+                        const dist = Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY);
+                        if (dist < 5) {
+                            if (event.button === 0) handleSelection(e); // Only Select on Left Click
+                        }
+                        window.removeEventListener('pointerup', onUp);
+                    };
+                    window.addEventListener('pointerup', onUp);
+                }
+            });
+
+            // 7. Maximize
+            div.addEventListener('dblclick', () => {
+                if (maximizedView === view) {
+                    maximizedView = null;
+                } else {
+                    maximizedView = view;
+                }
+                updateLayout();
+            });
+        });
+
+        // --- Scene Content ---
+        const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+        scene.add(gridHelper);
+        const axesHelper = new THREE.AxesHelper(2);
+        scene.add(axesHelper);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 7);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // Objects
+        const geometry = new THREE.BoxGeometry(2, 2, 2);
+        const material1 = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+        const cube1 = new THREE.Mesh(geometry, material1);
+        cube1.position.set(-3, 1, 0);
+        cube1.castShadow = true;
+        cube1.name = "Cube 1";
+        scene.add(cube1);
+        objects.push(cube1);
+
+        const material2 = new THREE.MeshStandardMaterial({ color: 0x0000ff });
+        const cube2 = new THREE.Mesh(geometry, material2);
+        cube2.position.set(3, 1, 0);
+        cube2.castShadow = true;
+        cube2.name = "Cube 2";
+        scene.add(cube2);
+        objects.push(cube2);
+
+        // --- Layout & Rendering ---
+        function updateLayout() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            if (canvas.width !== width || canvas.height !== height) {
+                renderer.setSize(width, height);
+            }
+
+            views.forEach(view => {
+                const div = view.div;
+
+                if (maximizedView) {
+                    if (view === maximizedView) {
+                        div.style.display = 'block';
+                        div.style.top = '0px';
+                        div.style.left = '0px';
+                        div.style.width = '100%';
+                        div.style.height = '100%';
+                        view.viewport = { left: 0, bottom: 0, w: width, h: height };
+                    } else {
+                        div.style.display = 'none';
+                        view.viewport = { left: 0, bottom: 0, w: 0, h: 0 };
+                    }
+                } else {
+                    div.style.display = 'block';
+                    const w = Math.floor(width * view.width);
+                    const h = Math.floor(height * view.height);
+                    const l = Math.floor(width * view.left);
+                    const b = Math.floor(height * view.bottom);
+
+                    div.style.left = l + 'px';
+                    div.style.top = (height - (b + h)) + 'px';
+                    div.style.width = w + 'px';
+                    div.style.height = h + 'px';
+
+                    view.viewport = { left: l, bottom: b, w: w, h: h };
+                }
+
+                if (view.viewport.w > 0) {
+                    const aspect = view.viewport.w / view.viewport.h;
+                    if (view.type === 'perspective') {
+                        view.camera.aspect = aspect;
+                        view.camera.updateProjectionMatrix();
+                    } else {
+                        view.camera.left = -viewSize * aspect / 2;
+                        view.camera.right = viewSize * aspect / 2;
+                        view.camera.top = viewSize / 2;
+                        view.camera.bottom = -viewSize / 2;
+                        view.camera.updateProjectionMatrix();
+                    }
+                }
+            });
+        }
+
+        function render() {
+            renderer.setScissorTest(false);
+            renderer.clear();
+            renderer.setScissorTest(true);
+
+            // Update BoxHelper if visible
+            if (selectionHelper.visible) {
+                selectionHelper.update();
+            }
+
+            views.forEach(view => {
+                if (view.viewport.w > 0) {
+                    const { left, bottom, w, h } = view.viewport;
+                    renderer.setViewport(left, bottom, w, h);
+                    renderer.setScissor(left, bottom, w, h);
+                    renderer.setClearColor(view.background);
+                    renderer.clear();
+
+                    // Visibility Toggling for Rendering
+                    // Hide all TCs, show only current view's TC, AND only if attached to an object
+                    views.forEach(v => v.tc.visible = (v === view) && (v.tc.object !== undefined && v.tc.object !== null));
+
+                    renderer.render(scene, view.camera);
+                }
+            });
+        }
+
+        function updateNavigation() {
+            const perspectiveView = views.find(v => v.type === 'perspective');
+            if (!perspectiveView) return;
+
+            const speed = 0.2;
+            const camera = perspectiveView.camera;
+            const controls = perspectiveView.controls;
+
+            const moveVector = new THREE.Vector3(0, 0, 0);
+
+            if (keyState.moveForward) moveVector.z -= speed;
+            if (keyState.moveBackward) moveVector.z += speed;
+            if (keyState.moveLeft) moveVector.x -= speed;
+            if (keyState.moveRight) moveVector.x += speed;
+            if (keyState.moveUp) moveVector.y += speed;
+            if (keyState.moveDown) moveVector.y -= speed;
+
+            if (moveVector.lengthSq() > 0) {
+                // Transform local movement vector to world space based on camera orientation
+                moveVector.applyQuaternion(camera.quaternion);
+
+                camera.position.add(moveVector);
+                controls.target.add(moveVector);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            updateNavigation();
+            render();
+        }
+
+        // Initial Layout
+        updateLayout();
+        animate();
+
+        window.addEventListener('resize', () => {
+            updateLayout();
+            // Update LineMaterial resolution
+            objects.forEach(obj => {
+                const edges = obj.children.find(c => c.name === 'fancy_edges');
+                if (edges && edges.material) {
+                    edges.material.resolution.set(window.innerWidth, window.innerHeight);
+                }
+            });
+        });
+
+        // Keyboard Shortcuts (Global)
+        window.addEventListener('keydown', function (event) {
+            const key = event.key.toLowerCase();
+
+            // Shift Key: Enable Pan for Left Mouse
+            if (event.key === 'Shift') {
+                const perspectiveView = views.find(v => v.type === 'perspective');
+                if (perspectiveView && perspectiveView.controls) {
+                    perspectiveView.controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+                }
+            }
+
+            switch (key) {
+                case '1':
+                    views.forEach(v => v.tc.setMode('translate'));
+                    break;
+                case '2':
+                    views.forEach(v => v.tc.setMode('rotate'));
+                    break;
+                case '3':
+                    views.forEach(v => v.tc.setMode('scale'));
+                    break;
+                case '+':
+                case '=':
+                    views.forEach(v => v.tc.setSize(v.tc.size + 0.1));
+                    break;
+                case '-':
+                case '_':
+                    views.forEach(v => v.tc.setSize(Math.max(v.tc.size - 0.1, 0.1)));
+                    break;
+                case 'x':
+                    // Fancy Wireframe Toggle
+                    objects.forEach(obj => {
+                        if (!obj.material) return;
+
+                        if (obj.userData.isFancyWireframe) {
+                            // Restore
+                            obj.material.transparent = false;
+                            obj.material.opacity = 1.0;
+                            obj.material.depthWrite = true;
+                            obj.material.side = THREE.FrontSide;
+
+                            // Hide edges
+                            const existing = obj.children.find(c => c.name === 'fancy_edges');
+                            if (existing) existing.visible = false;
+
+                            obj.userData.isFancyWireframe = false;
+                        } else {
+                            // Enable
+                            obj.material.transparent = true;
+                            obj.material.opacity = 0.25;
+                            obj.material.depthWrite = false; // Important for transparency sorting
+                            obj.material.side = THREE.DoubleSide; // See backfaces
+
+                            // Show/Create edges (Fat Lines)
+                            let customEdges = obj.children.find(c => c.name === 'fancy_edges');
+                            if (!customEdges) {
+                                const edgesGeo = new THREE.EdgesGeometry(obj.geometry);
+                                const lineGeo = new LineGeometry();
+                                lineGeo.setPositions(edgesGeo.attributes.position.array);
+
+                                const lineMat = new LineMaterial({
+                                    color: 0x000000,
+                                    linewidth: 5, // Screen space pixels
+                                    resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
+                                });
+
+                                customEdges = new Line2(lineGeo, lineMat);
+                                customEdges.name = 'fancy_edges';
+                                customEdges.computeLineDistances();
+                                obj.add(customEdges);
+                            }
+
+                            customEdges.visible = true;
+                            obj.userData.isFancyWireframe = true;
+                        }
+                    });
+                    break;
+                case 'escape':
+                    selectedObject = null;
+                    views.forEach(v => v.tc.detach());
+                    selectionHelper.visible = false;
+                    break;
+
+                // Navigation
+                case 'w': keyState.moveForward = true; break;
+                case 's': keyState.moveBackward = true; break;
+                case 'a': keyState.moveLeft = true; break;
+                case 'd': keyState.moveRight = true; break;
+                case 'q': keyState.moveUp = true; break;
+                case 'e': keyState.moveDown = true; break;
+            }
+        });
+
+        window.addEventListener('keyup', function (event) {
+            if (event.key === 'Shift') {
+                const perspectiveView = views.find(v => v.type === 'perspective');
+                if (perspectiveView && perspectiveView.controls) {
+                    perspectiveView.controls.mouseButtons.LEFT = THREE.MOUSE.NONE; // Back to Look Mode
+                }
+            }
+
+            switch (event.key.toLowerCase()) {
+                case 'w': keyState.moveForward = false; break;
+                case 's': keyState.moveBackward = false; break;
+                case 'a': keyState.moveLeft = false; break;
+                case 'd': keyState.moveRight = false; break;
+                case 'q': keyState.moveUp = false; break;
+                case 'e': keyState.moveDown = false; break;
+            }
+        });
+
+        // Drag & Drop
+        const gltfLoader = new GLTFLoader();
+        const objLoader = new OBJLoader();
+
+        window.addEventListener('dragover', e => e.preventDefault());
+        window.addEventListener('drop', e => {
+            e.preventDefault();
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const filename = file.name.toLowerCase();
+                const reader = new FileReader();
+
+                reader.onload = function (event) {
+                    const content = event.target.result;
+                    if (filename.endsWith('.glb')) {
+                        gltfLoader.parse(content, '', gltf => {
+                            const model = gltf.scene;
+                            scene.add(model);
+                            model.traverse(c => { if (c.isMesh) objects.push(c); });
+                        });
+                    } else if (filename.endsWith('.gltf')) {
+                        gltfLoader.parse(content, '', gltf => {
+                            const model = gltf.scene;
+                            scene.add(model);
+                            model.traverse(c => { if (c.isMesh) objects.push(c); });
+                        });
+                    } else if (filename.endsWith('.obj')) {
+                        const obj = objLoader.parse(content);
+                        scene.add(obj);
+                        obj.traverse(c => { if (c.isMesh) objects.push(c); });
+                    }
+                };
+
+                if (filename.endsWith('.glb')) reader.readAsArrayBuffer(file);
+                else reader.readAsText(file);
+            }
+        });
+
+    </script>
+</body>
+
+</html>
