@@ -11,3 +11,7 @@ Navigation (Perspective):
 2) Shift + Right Click Drag: Pans the camera.
 3) Left Click Drag: "Looks" around (First-Person interpretation).
 4) WASD + QE: Fly around.
+
+Drag & Drop feature:
+- Drag the .obj file from your file explorer and drop it into the viewer window.
+- The model should appear in the scene (usually at 0,0,0).
